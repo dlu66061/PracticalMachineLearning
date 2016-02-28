@@ -1,0 +1,100 @@
+---
+title: "Practical Machine Learning Project"
+author: "Dongfeng Lu"
+date: "February 25, 2016"
+output: html_document
+---
+### Executive Summary
+
+In this project, we cleanse the training data, select the random forest method to build our model given the training data set, carry out the cross validation, discuss the characteristics of our model, and finally predict the outcome of the testing dataset. The most important point is that our model has a very small error rate of "0.189%" and this model is very reliable.
+
+### Data Cleansing 
+First we load all the libraries we use in the project. Notice that we are loading "randomForst" packages because its random forest function is way faster than the "train(..., method="rf")" method in "caret" package. We are still loading "caret" because its "confusionMatrix" is quite convinient.
+```{r message = FALSE}
+library(scales)
+library(randomForest)
+library(caret)
+```
+
+We then load the training data and testing data.
+
+```{r cache=TRUE}
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+```
+
+```{r echo=FALSE}
+naSummary <- summary(training$var_accel_forearm);
+naNum <- as.integer(naSummary[length(naSummary)])
+```
+Opening up the training data set, we can see that there are many columns with a lot of "NA" values or empty string values. When we check the "summary(training)", we can see that for most of those columns, the number of "NA" or empty string values is about `r naNum`, which is `r percent(naNum/nrow(training))` of the  `r nrow(training)` observations. Clearly, those columns are of little importance in this exercise. In addition, the first 5 columns like name and time does not have any predictive powers. We remove them with the following commands:
+```{r cache=TRUE}
+training <- training[, colSums(is.na(training)) < nrow(training)/2]
+training <- training[, colSums(training == "") < nrow(training)/2]
+training <- training[, -c(1:5)]
+```
+
+Interestingly we notice that the "randomForest" package is less forgiving than the "caret". One more cleansing we need to do is 
+```{r}
+levels(testing$new_window) <- levels(training$new_window)
+```
+because the "new_window" field contains "no" values only in test dataset, but contains "no" and "yes" in the training dataset. Thus, R creates an one-level factor for test dataset, and a two-level factor for the training dataset. When using the "predict" method on the original test dataset, R complains that "Type of predictors in new data do not match that of the training data." The above assignment resolves the problem.
+
+### Model Selection
+This is a problem of classification, and the most popular methods would be logistic regression, linear discrimianant analysis, and tree based models like bagging, random forest, and boosting. Frankly, with about `r ncol(training) -1 ` predictors in our cleansed dataset, we are more concerned with the prediction accuary than the interpretability. In addition, bagging, random forest and boosting are build from multiple trees and the results has already been averaged over a large number of tree models. Therefore, it has a lower bias and lower variance. In this project, we are going to use random forest method.
+
+To have a good estimate of test errors, we will use bootstrap method to randomly sample one-tenth of the training data as our validation set for the cross-validation, and the rest as the new training set for building the model. We are going to test it out 10 times.
+
+```{r, cache=TRUE}
+k <- 10
+errorRateRf <- rep (0 ,k)
+subSetSize <- as.integer(nrow(training)/k)
+set.seed(900)
+
+for (i in 1:k) {
+  validationSetRange = runif(subSetSize, 1, nrow(training))
+  validateSet = training[validationSetRange, ]
+  subTraingSet = training[-validationSetRange, ]
+  modRfSub <- randomForest( classe ~., data= subTraingSet )
+
+  predRfSub <- predict(modRfSub, validateSet)
+  confusionRfSub <- confusionMatrix(validateSet$classe, predRfSub)
+  errorRateRf[i] <- 1 - confusionRfSub$overall[1]
+}
+ 
+```
+
+After a long time of processing, we have the list of error rate for our 10 trials.
+```{r}
+percent(errorRateRf)
+```
+
+with an average error rate of `r percent(mean(errorRateRf))`, which is pretty low. In other words, our model built with the random forest method and `r nrow(training)` observations is quite reliable.
+
+Our final model with the complete training set is given by
+
+```{r cache=TRUE}
+modRf <- randomForest( classe ~., data= training, importance =TRUE )
+```
+
+### What Can We Learn About Our Model?
+```{r}
+modRf
+```
+Our model has tries 500 trees, and uses 7 variables at each split instead of all `r ncol(training) -1 ` predictors as in bagging method. Its "OOB estimate of the error rate" is smaller than, but still very close to our test error rate of `r percent(mean(errorRateRf))`. In fact, the following plot shows us the error rates that this model has tried
+```{r fig.height=6, fig.width=10}
+plot(modRf, main = "Our Model's Error Rate")
+```
+
+One will definitely wonder that out of `r ncol(training) -1 ` predictors, which are more important in our model? Let's draw an importance diagram:
+```{r fig.height=8, fig.width=10}
+varImpPlot(modRf, main="Our Model's Importance Chart")
+```
+
+We can see that "yaw_belt", "num_window", and "roll_belt" are the top three influencers.
+
+### Prediction of the test set.
+Finally, we apply our model to the testing set and predict
+```{r}
+predict(modRf, testing)
+```
